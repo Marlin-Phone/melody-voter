@@ -1,0 +1,31 @@
+name: daily-sync
+
+on:
+  schedule:
+    # 每天 09:00 北京时间（GitHub cron 为 UTC：9:00+8 = 1:00 UTC）
+    - cron: '0 1 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore config from secret
+        run: |
+          echo "${{ secrets.SETTING_JSON_B64 }}" | base64 -d > config/setting.json
+          test -s config/setting.json || { echo "::error::SETTING_JSON_B64 secret 缺失或无效"; exit 1; }
+
+      - name: Run daily tasks
+        run: python main.py
