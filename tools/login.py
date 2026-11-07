@@ -20,9 +20,8 @@ import requests
 from src.signer import weapi_encrypt
 
 API = {
-    "unikey": "https://music.163.com/api/login/qrcode/unikey",
-    "qrcode_check": "https://music.163.com/api/login/qrcode/qrcheck",
-    "login": "https://music.163.com/api/login/qrcode/client/login",
+    "unikey": "https://music.163.com/weapi/login/qrcode/unikey",
+    "login": "https://music.163.com/weapi/login/qrcode/client/login",
 }
 CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "setting.json"
@@ -32,9 +31,9 @@ CONFIG_PATH = os.path.join(
 def fetch_unikey(session) -> str:
     params = weapi_encrypt({"type": 1})
     resp = session.post(API["unikey"], data=params, timeout=20).json()
-    if resp.get("code") != 200:
+    if resp.get("code") != 200 or not resp.get("unikey"):
         raise RuntimeError(f"获取 unikey 失败: {resp}")
-    return resp["data"]["unikey"]
+    return resp["unikey"]
 
 
 def print_qr(unikey: str):
@@ -47,32 +46,29 @@ def print_qr(unikey: str):
     print(f"或手机浏览器访问: {url}")
 
 
-def wait_scan(session, unikey: str, timeout=120):
-    """轮询二维码状态：801等待 802已扫待确认 803成功 800过期"""
+def wait_scan(session, unikey: str, timeout=120) -> str:
+    """
+    轮询登录状态（网易云已将 qrcheck 并入 client/login 接口）：
+    801=等待扫码 802=已扫待确认 800=过期 200=成功（返回 cookie 字符串）
+    """
     start = time.time()
     while time.time() - start < timeout:
         params = weapi_encrypt({"key": unikey, "type": 1})
-        resp = session.post(API["qrcode_check"], data=params, timeout=20).json()
+        resp = session.post(API["login"], data=params, timeout=20).json()
         code = resp.get("code")
-        if code == 803:
-            return True
+        if code == 200:
+            cookies = resp.get("data", {}).get("cookie", "")
+            if cookies:
+                return cookies
+            raise RuntimeError("登录成功但响应中未包含 cookie")
         if code == 802:
             print("✅ 已扫码，请在手机上确认登录...")
         elif code == 800:
             raise RuntimeError("二维码已过期，请重试")
+        elif code != 801:
+            print(f"⏳ 扫码状态: {code} {resp.get('message', '')}，继续等待...")
         time.sleep(1.5)
     raise TimeoutError("等待扫码超时")
-
-
-def do_login(session, unikey: str) -> str:
-    params = weapi_encrypt({"key": unikey, "type": 1})
-    resp = session.post(API["login"], data=params, timeout=20)
-    data = resp.json()
-    if data.get("code") != 200:
-        raise RuntimeError(f"登录失败: {data}")
-    # 返回的 data.cookie 是一段 "Key=Value; ..." 字符串
-    cookies = data.get("data", {}).get("cookie", "")
-    return cookies
 
 
 def parse_cookies(cookie_str: str) -> dict:
@@ -124,8 +120,7 @@ def main():
 
     unikey = fetch_unikey(session)
     print_qr(unikey)
-    wait_scan(session, unikey)
-    cookie_str = do_login(session, unikey)
+    cookie_str = wait_scan(session, unikey)
     cookies = parse_cookies(cookie_str)
     if not cookies.get("MUSIC_U"):
         raise RuntimeError(f"登录成功但未拿到 MUSIC_U: {list(cookies.keys())}")
