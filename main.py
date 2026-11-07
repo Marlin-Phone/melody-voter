@@ -58,14 +58,16 @@ def run_account(account: dict, debug: bool = False):
     daily = DailyTask(session, logger, config)
     complete, task_data = daily.get_tasks()
     if not complete and task_data.get("works"):
-        daily_result = daily.run(engine, pick_score, tags_cb, comment_cb)
+        daily_result = daily.run(pick_score, tags_cb, comment_cb)
     else:
-        daily_result = {"type": "daily", "done": 0, "failed": 0, "id": task_data.get("id", "")}
+        daily_result = {"type": "daily", "done": 0, "failed": 0, "id": str(task_data.get("id", ""))}
 
-    # 4. 额外任务
+    # 4. 额外任务（使用每日任务 task_id，新协议需要）
     extra = ExtraTask(session, logger, config)
     try:
-        extra_result = extra.run(engine, pick_score, tags_cb, comment_cb, task_id="")
+        extra_result = extra.run(
+            pick_score, tags_cb, comment_cb, task_id=daily_result.get("id", "")
+        )
     except Exception as e:
         logger.error(f"额外任务失败: {e}")
         extra_result = {"type": "extra", "done": 0, "failed": 0}
