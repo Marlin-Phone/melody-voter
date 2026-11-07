@@ -1,4 +1,4 @@
-"""signer: 网易云 weapi 加密签名 + 评分策略引擎（v2 增强）"""
+"""signer: 网易云 weapi 加密签名 + 评分策略引擎（v3 适配新协议）"""
 import base64
 import codecs
 import json
@@ -15,8 +15,10 @@ AES_KEY = "0CoJUm6Qyw8W8jud"
 
 
 def _add_to_16(text: str) -> bytes:
-    pad = 16 - len(text) % 16
-    return (text + chr(pad) * pad).encode("utf-8")
+    """按 UTF-8 字节数填充到 16 的倍数（中文 3 字节，不能按字符数算）"""
+    data = text.encode("utf-8")
+    pad = 16 - len(data) % 16
+    return data + bytes([pad] * pad)
 
 
 def weapi_encrypt(data: dict) -> Dict[str, str]:
@@ -30,7 +32,8 @@ def weapi_encrypt(data: dict) -> Dict[str, str]:
         cipher = AES.new(key.encode("utf-8"), AES.MODE_CBC, IV.encode("utf-8"))
         return base64.b64encode(cipher.encrypt(_add_to_16(text))).decode("utf-8")
 
-    params = aes_encrypt(json.dumps(data, ensure_ascii=False), AES_KEY)
+    # ensure_ascii=True：中文转义为 \uXXXX，避免编码长度与字符数不一致
+    params = aes_encrypt(json.dumps(data, ensure_ascii=True), AES_KEY)
     params = aes_encrypt(params, random_str)
 
     rev = random_str[::-1]
@@ -89,9 +92,10 @@ class Signer:
         self.debug = debug
         self.sign_url = "https://interface.music.163.com/weapi/music/partner/work/evaluate"
 
-    def sign(self, work: dict, is_extra: bool = False) -> Tuple[bool, dict]:
+    def sign(self, work: dict, is_extra: bool = False, extra_score: str = "{}") -> Tuple[bool, dict]:
         """
         评分并返回 (是否成功, 响应体)
+        extra_score: 小评分维度 JSON 字符串，如 '{"2":4,"3":5}'（新协议必需）
         """
         try:
             delay = random.uniform(
@@ -117,9 +121,12 @@ class Signer:
                 "workId": work["id"],
                 "score": str(score),
                 "tags": tags,
-                "customTags": "%5B%5D",
+                "customTags": "[]",
                 "comment": comment,
                 "syncYunCircle": "true",
+                "syncComment": "true" if comment else "false",
+                "extraScore": extra_score,
+                "source": "mp-music-partner",
                 "csrf_token": csrf,
             }
             if is_extra:
@@ -143,9 +150,13 @@ class Signer:
             if "频繁" in msg:
                 self.logger.warning("频率限制，等待后重试")
                 time.sleep(random.uniform(30, 60))
-                return self.sign(work, is_extra)
+                return self.sign(work, is_extra, extra_score)
             if code == 405 and "资源状态异常" in msg:
                 self.logger.warning(f'「{work.get("name")}」资源状态异常，跳过')
+                return False, resp
+            # 今日配额已满（'今日没有更多可评定歌曲啦' 等 405）——整体跳过不重试
+            if code == 405 and "没有更多" in str(msg):
+                self.logger.info("今日评分配额已满，停止本轮评分")
                 return False, resp
             self.logger.error(f"评分失败: {msg} (code={code})")
             return False, resp
