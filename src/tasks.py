@@ -1,4 +1,11 @@
-"""tasks: 每日基础任务 + 额外评分任务（v2 增强：动态上限 / 评论 / 全量额外）"""
+"""tasks: 每日基础任务 + 额外评分任务（v3 适配 2026-09 新协议）
+
+新协议要点（实测确认）：
+- 额外任务 evaluate 必须带 extraScore（小评分维度，来自 work.supportExtraEvaTypes）
+- taskId 统一用每日任务的 task_id（不是空串）
+- customTags 直接 "[]"（非 URL 编码）
+- 需带 syncComment / source: "mp-music-partner"
+"""
 import random
 import time
 from typing import Dict, List, Tuple
@@ -11,6 +18,16 @@ API = {
     "report_listen": "https://interface.music.163.com/weapi/partner/resource/interact/report",
 }
 
+MAX_TOTAL_PER_DAY = 20  # 每日基础5 + 额外最多15
+
+
+def build_extra_score(work: dict, scorer) -> str:
+    """按 supportExtraEvaTypes 构建 extraScore JSON 字符串"""
+    dims = work.get("supportExtraEvaTypes") or []
+    if not dims:
+        return "{}"
+    return str({str(d): scorer() for d in dims})
+
 
 class DailyTask:
     """每日 5 首基础评分"""
@@ -22,22 +39,22 @@ class DailyTask:
 
     def get_tasks(self) -> Tuple[bool, dict]:
         resp = self.session.get(url=API["daily_task"], timeout=20).json()
-        task_data = resp.get("data", {})
-        count = task_data.get("count", 0)
-        completed = task_data.get("completedCount", 0)
+        data = resp.get("data", {})
+        count = data.get("count", 0)
+        completed = data.get("completedCount", 0)
         self.logger.info(f"今日基础任务: [{completed}/{count}]")
-        return (count == completed), task_data
+        return (count == completed), data
 
-    def run(self, engine, pick_score, tags_cb, comment_cb) -> dict:
+    def run(self, pick_score, tags_cb, comment_cb) -> dict:
         complete, task_data = self.get_tasks()
-        result = {"type": "daily", "done": 0, "failed": 0, "id": task_data.get("id", "")}
+        result = {"type": "daily", "done": 0, "failed": 0, "id": str(task_data.get("id", ""))}
         if complete or not task_data.get("works"):
-            self.logger.info("基础任务已全部完成")
+            self.logger.info("基础任务已全部完成（或今日已达标）")
             return result
 
         signer = Signer(
             self.session,
-            task_data["id"],
+            result["id"],
             self.logger,
             {
                 **self.config,
@@ -52,7 +69,7 @@ class DailyTask:
             if task.get("completed"):
                 self.logger.info(f'「{work.get("name")}」已有评分：{task.get("score")}分')
                 continue
-            ok, _ = signer.sign(work)
+            ok, _ = signer.sign(work, extra_score=build_extra_score(work, pick_score))
             if ok:
                 result["done"] += 1
             else:
@@ -61,7 +78,7 @@ class DailyTask:
 
 
 class ExtraTask:
-    """额外评分任务（v2：动态读取上限，可做满全部）"""
+    """额外评分任务（v3：完整 new-protocol payload）"""
 
     def __init__(self, session, logger, config: dict):
         self.session = session
@@ -79,26 +96,26 @@ class ExtraTask:
         completed_count = len([t for t in tasks if t.get("completed")])
         return uncompleted, completed_count
 
-    def run(self, engine, pick_score, tags_cb, comment_cb, task_id: str = "") -> dict:
-        if not task_id:
-            # 额外任务无 taskId 也能上报听歌；评分走空 taskId（与原脚本一致）
-            pass
+    def run(self, pick_score, tags_cb, comment_cb, task_id: str = "") -> dict:
         result = {"type": "extra", "done": 0, "failed": 0}
 
         uncompleted, completed_count = self.get_extra_tasks()
         limit = int(self.config.get("extra_task_limit", 0) or 0)
         if limit <= 0:
-            limit = len(uncompleted) + completed_count  # 动态上限=做满当前全部
+            # 新协议每日最多 dailyMaxExtendEvaluateScore（15）
+            limit = min(len(uncompleted) + completed_count, 15)
         remaining = max(0, limit - completed_count)
         if remaining <= 0:
             self.logger.info(f"额外任务已完成 {completed_count}，达到上限 {limit}")
             return result
 
-        self.logger.info(f"待完成额外评分: {len(uncompleted)} 个（本轮上限 {limit}，已完成 {completed_count}）")
+        self.logger.info(
+            f"待完成额外评分: {len(uncompleted)} 个（本轮上限 {limit}，已完成 {completed_count}）"
+        )
 
         signer = Signer(
             self.session,
-            "",
+            task_id,  # 新协议：统一使用每日任务的 task_id
             self.logger,
             {
                 **self.config,
@@ -116,7 +133,11 @@ class ExtraTask:
             work = task.get("work", {})
             try:
                 self._report_listen(work)
-                ok, _ = signer.sign(work, is_extra=True)
+                ok, _ = signer.sign(
+                    work,
+                    is_extra=True,
+                    extra_score=build_extra_score(work, pick_score),
+                )
                 if ok:
                     result["done"] += 1
                     done_in_this_run += 1
