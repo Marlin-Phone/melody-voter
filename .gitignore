@@ -1,0 +1,12 @@
+# 真实配置（含 Cookie 凭据）绝不提交
+config/setting.json
+
+# 运行时数据（账本/日志）
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/

@@ -1,0 +1,33 @@
+{
+  "accounts": [
+    {
+      "name": "main",
+      "Cookie_MUSIC_U": "您的MUSIC_U值",
+      "Cookie___csrf": "您的__csrf值",
+      "wait_time_min": 15,
+      "wait_time_max": 20,
+      "score_weights": {"1": 10, "2": 10, "3": 15, "4": 25, "5": 40},
+      "extra_task_limit": 0,
+      "enable_comment": true,
+      "comment_pool": [
+        "旋律上头",
+        "副歌好抓耳",
+        "编曲有质感",
+        "歌词写进心里了",
+        "循环播放中",
+        "氛围感拉满",
+        "越听越有味道",
+        "前奏一响就爱了",
+        "和声绝了",
+        "单曲循环预定"
+      ]
+    }
+  ],
+  "period_start_date": "2026-10-12",
+  "target_points": 320,
+  "notify_email": "",
+  "email_password": "",
+  "smtp_server": "",
+  "smtp_port": 465,
+  "debug": false
+}
