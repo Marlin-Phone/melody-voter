@@ -50,6 +50,19 @@ melody-voter/
    python main.py --account main   # 只跑指定账号
    ```
 
+## GitHub Actions 自动运行（推荐）
+
+每天 09:00（北京时间）自动完成当日任务，无需本机常驻：
+
+1. 打开仓库 Settings → Secrets and variables → Actions → New repository secret
+2. 名称填 `SETTING_JSON_B64`，值填 base64 编码的 `config/setting.json`：
+   ```bash
+   base64 -w0 config/setting.json   # macOS/Linux
+   # Windows PowerShell: [Convert]::ToBase64String([IO.File]::ReadAllBytes("config\setting.json"))
+   ```
+3. Actions 页可手动 Run workflow 测试；之后每天自动执行
+4. Cookie 约两周过期，失效后重新 `python tools/login.py` 扫码，更新 secret 即可
+
 ## 配置项说明（config/setting.json）
 
 ```jsonc
