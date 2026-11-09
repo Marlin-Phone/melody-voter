@@ -75,8 +75,12 @@ def run_account(account: dict, debug: bool = False):
     total_done = daily_result.get("done", 0) + extra_result.get("done", 0)
     total_failed = daily_result.get("failed", 0) + extra_result.get("failed", 0)
 
-    # 5. 记账 + 报告
-    ledger = Ledger(name=name, period_start=account.get("period_start"), target=account.get("target_points", 320))
+    # 5. 记账 + 报告（period_start/target 缺省时回退全局配置，与 --report 分支一致）
+    ledger = Ledger(
+        name=name,
+        period_start=account.get("period_start") or config.global_get("period_start_date"),
+        target=account.get("target_points") or config.global_get("target_points", 320),
+    )
     if total_done or total_failed:
         ledger.record(total_done, total_failed, note="auto")
     logger.info(f"[{name}] 本次完成 {total_done} 首，失败 {total_failed} 首")
