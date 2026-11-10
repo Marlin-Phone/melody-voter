@@ -76,12 +76,8 @@ def run_account(account: dict, debug: bool = False):
     total_done = daily_result.get("done", 0) + extra_result.get("done", 0)
     total_failed = daily_result.get("failed", 0) + extra_result.get("failed", 0)
 
-    # 5. 记账 + 报告（period_start/target 缺省时回退全局配置，与 --report 分支一致）
-    ledger = Ledger(
-        name=name,
-        period_start=account.get("period_start") or cfg.global_get("period_start_date"),
-        target=account.get("target_points") or cfg.global_get("target_points", 320),
-    )
+    # 5. 记账 + 报告（结算期锚点与达标线均为 Ledger 内置常量，自动计算）
+    ledger = Ledger(name=name)
     if total_done or total_failed:
         ledger.record(total_done, total_failed, note="auto")
     logger.info(f"[{name}] 本次完成 {total_done} 首，失败 {total_failed} 首")
@@ -105,11 +101,7 @@ def main():
 
     if args.report:
         for acc in config.accounts:
-            ledger = Ledger(
-                name=acc.get("name", "default"),
-                period_start=acc.get("period_start") or config.global_get("period_start_date"),
-                target=acc.get("target_points") or config.global_get("target_points", 320),
-            )
+            ledger = Ledger(name=acc.get("name", "default"))
             print(ledger.print_report())
             print()
         return
