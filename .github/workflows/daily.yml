@@ -35,7 +35,7 @@ jobs:
       - name: Fail if cookie expired
         if: always()
         run: |
-          if grep -qE "Cookie无效|Cookie失效|验证失败" data/logs/*.log 2>/dev/null; then
+          if grep -qE "Cookie无效|Cookie失效|验证失败" data/logs/*$(date +%F).log 2>/dev/null; then
             echo "::error::检测到 Cookie 已失效！请在本地更新 config/setting.json 后重新上传 SETTING_JSON_B64 secret"
             exit 1
           fi
