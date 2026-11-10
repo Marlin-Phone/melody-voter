@@ -32,7 +32,8 @@ def run_account(account: dict, debug: bool = False):
 
     config = {**account, "_debug": debug, "_comment_pool": account.get("comment_pool", [])}
 
-    notifier = Notifier(Config(), logger)
+    cfg = Config()
+    notifier = Notifier(cfg, logger)
 
     # 1. Cookie 校验
     ok, msg = CookieValidator(session, logger).validate()
@@ -78,8 +79,8 @@ def run_account(account: dict, debug: bool = False):
     # 5. 记账 + 报告（period_start/target 缺省时回退全局配置，与 --report 分支一致）
     ledger = Ledger(
         name=name,
-        period_start=account.get("period_start") or config.global_get("period_start_date"),
-        target=account.get("target_points") or config.global_get("target_points", 320),
+        period_start=account.get("period_start") or cfg.global_get("period_start_date"),
+        target=account.get("target_points") or cfg.global_get("target_points", 320),
     )
     if total_done or total_failed:
         ledger.record(total_done, total_failed, note="auto")
