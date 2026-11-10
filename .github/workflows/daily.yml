@@ -29,3 +29,13 @@ jobs:
 
       - name: Run daily tasks
         run: python main.py
+
+      # Cookie 失效检测：任一账号 Cookie 无效 -> 本步骤失败 -> job 红叉
+      # （触发 GitHub 失败通知邮件，作为 cookie 过期的告警通道）
+      - name: Fail if cookie expired
+        if: always()
+        run: |
+          if grep -qE "Cookie无效|Cookie失效|验证失败" data/logs/*.log 2>/dev/null; then
+            echo "::error::检测到 Cookie 已失效！请在本地更新 config/setting.json 后重新上传 SETTING_JSON_B64 secret"
+            exit 1
+          fi
