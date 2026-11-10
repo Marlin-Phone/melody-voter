@@ -1,9 +1,9 @@
 """ledger: 积分账本 + 结算期冲刺提醒（v2 增强核心）
 
-基于每 28 天一个结算期、达标积分 target_points（默认320）的机制：
+基于每 28 天一个结算期（周一 00:00 起）、达标积分 TARGET_POINTS=320 的机制：
 - 每次运行把「已评歌曲数」「预计积分」追加写入 data/ledger/YYYY-MM-DD.jsonl
-- 计算当前结算期（从 period_start_date 起每 28 天滚动）内的累计已评歌曲与预计积分
-- 输出距离达标线还差多少首歌（按最近 N 天平均分/首估算）
+- 计算当前结算期（内置锚点 PERIOD_ANCHOR 起每 28 天自动滚动）内的累计已评歌曲与预计积分
+- 输出距离达标线还差多少首歌（按约 3 分/首估算）
 """
 import json
 import os
@@ -11,12 +11,18 @@ from datetime import date, datetime, timedelta
 
 LEDGER_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "ledger")
 
+# 网易云「音乐合伙人」结算期锚点：74 期开始日 2026-11-09（周一）。
+# 每 28 天一个周期，此后各期由代码自动滚动（75 期=2026-12-07、76 期=2027-01-04 …），无需配置。
+PERIOD_ANCHOR = date(2026, 11, 9)
+
+# 每期达标积分线（App 长期固定 320，若平台调整改这里即可，无需配置项）
+TARGET_POINTS = 320
+
 
 class Ledger:
-    def __init__(self, name: str = "main", period_start: str = None, target: int = 320):
+    def __init__(self, name: str = "main"):
         self.name = name
-        self.target = target
-        self.period_start = self._parse_date(period_start) if period_start else None
+        self.target = TARGET_POINTS
         os.makedirs(LEDGER_DIR, exist_ok=True)
 
     @staticmethod
@@ -53,13 +59,11 @@ class Ledger:
         return rows
 
     def period_bounds(self, today: date = None) -> tuple:
-        """返回当前结算期的 (开始日, 结束日)。无 period_start 时退化为近28天滚动。"""
+        """返回当前结算期的 (开始日, 结束日)。按内置锚点每 28 天自动滚动。"""
         today = today or date.today()
-        if not self.period_start:
-            return today - timedelta(days=27), today
-        delta = (today - self.period_start).days
+        delta = (today - PERIOD_ANCHOR).days
         idx = delta // 28
-        start = self.period_start + timedelta(days=idx * 28)
+        start = PERIOD_ANCHOR + timedelta(days=idx * 28)
         end = start + timedelta(days=27)
         return start, end
 
