@@ -28,7 +28,11 @@ jobs:
           test -s config/setting.json || { echo "::error::SETTING_JSON_B64 secret 缺失或无效"; exit 1; }
 
       - name: Run daily tasks
-        run: python main.py
+        run: |
+          # 清掉当天旧日志（含此前失败的 Cookie 失效记录），确保检测只针对本次运行
+          # 否则同一天先失败、更新 cookie 后再跑一次会被历史 ERROR 误杀
+          rm -f data/logs/*$(date +%F).log
+          python main.py
 
       # Cookie 失效检测：任一账号 Cookie 无效 -> 本步骤失败 -> job 红叉
       # （触发 GitHub 失败通知邮件，作为 cookie 过期的告警通道）
