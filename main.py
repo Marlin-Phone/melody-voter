@@ -11,6 +11,7 @@ import os
 import random
 import sys
 import time
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -39,7 +40,12 @@ def run_account(account: dict, debug: bool = False):
     ok, msg = CookieValidator(session, logger).validate()
     if not ok:
         logger.error(f"[{name}] {msg}")
-        notifier.send("melody-voter Cookie失效", f"{name}: {msg}")
+        notifier.send(
+            "melody-voter Cookie 失效，需重新扫码",
+            f"{name}: {msg}\n\n"
+            "请在本地运行 tools/login.py 扫码续命，\n"
+            "并更新 Actions secret SETTING_JSON_B64",
+        )
         return {"name": name, "error": msg}
 
     # 2. 评分引擎（权重策略 + 评论）
@@ -84,10 +90,23 @@ def run_account(account: dict, debug: bool = False):
     logger.info(ledger.print_report())
 
     notifier.send(
-        f"melody-voter [{name}] 任务完成",
-        f"本次完成 {total_done} 首，失败 {total_failed} 首",
+        f"melody-voter [{name}] 每日报告 {datetime.now():%Y-%m-%d}",
+        f"本次完成 {total_done} 首，失败 {total_failed} 首\n\n" + ledger.print_report(),
     )
     return {"name": name, "done": total_done, "failed": total_failed}
+
+
+def notify_crash(acc: dict, exc: Exception):
+    """运行抛异常时的 TG 兜底通知（python 层主动报，不依赖 workflow 失败邮件）"""
+    try:
+        cfg = Config()
+        notifier = Notifier(cfg, Logger("crash"))
+        notifier.send(
+            f"melody-voter [{acc.get('name', '?')}] 运行异常",
+            f"{type(exc).__name__}: {exc}",
+        )
+    except Exception as e2:
+        print(f"异常通知也发送失败: {e2}")
 
 
 def main():
@@ -118,6 +137,7 @@ def main():
             run_account(acc, debug)
         except Exception as e:
             print(f"账号 {acc.get('name', '?')} 运行异常: {e}")
+            notify_crash(acc, e)
         # 账号间随机间隔，降低批量关联风险
         if len(targets) > 1:
             delay = random.uniform(30, 90)
