@@ -1,10 +1,12 @@
-"""utils: 配置 / 日志 / Cookie校验 / 邮件通知"""
+"""utils: 配置 / 日志 / Cookie校验 / 通知（TG Bot 为主，邮件可选）"""
 import json
 import os
 import random
 import smtplib
 import sys
 from email.mime.text import MIMEText
+
+import requests
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(BASE_DIR, "config", "setting.json")
@@ -96,16 +98,48 @@ class CookieValidator:
 
 
 class Notifier:
-    """SMTP 邮件通知（可选）"""
+    """通知：Telegram Bot（推荐）+ 可选 SMTP 邮件
+
+    - TG 通道读环境变量 TG_BOT_TOKEN / TG_CHAT_ID（GitHub Actions 里以
+      secrets 注入）；未配置时静默降级为 no-op，不影响主流程
+    - 邮件通道仅在配置了 notify_email 时启用
+    - 任一发失败只记日志、不抛异常，不阻断评分主流程
+    """
 
     def __init__(self, config: Config, logger: Logger):
         self.config = config
         self.logger = logger
-        self.enabled = bool(config.global_get("notify_email"))
+        self.tg_token = os.environ.get("TG_BOT_TOKEN", "").strip()
+        self.tg_chat_id = os.environ.get("TG_CHAT_ID", "").strip()
+        self.tg_enabled = bool(self.tg_token and self.tg_chat_id)
+        self.email_enabled = bool(config.global_get("notify_email"))
 
     def send(self, subject: str, body: str):
-        if not self.enabled:
+        """发送通知（TG + 邮件，各自独立降级）"""
+        self.send_tg(subject, body)
+        if self.email_enabled:
+            self.send_email(subject, body)
+
+    def send_tg(self, subject: str, body: str):
+        if not self.tg_enabled:
             return
+        try:
+            resp = requests.post(
+                f"https://api.telegram.org/bot{self.tg_token}/sendMessage",
+                json={
+                    "chat_id": self.tg_chat_id,
+                    "text": f"{subject}\n\n{body}",
+                    "disable_web_page_preview": True,
+                },
+                timeout=20,
+            )
+            if not resp.json().get("ok"):
+                raise RuntimeError(f"TG API 错误: {resp.text[:200]}")
+            self.logger.info(f"Telegram 通知已发送: {subject}")
+        except Exception as e:
+            self.logger.error(f"Telegram 通知发送失败: {e}")
+
+    def send_email(self, subject: str, body: str):
         try:
             msg = MIMEText(body, "plain", "utf-8")
             msg["Subject"] = subject
