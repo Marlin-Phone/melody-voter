@@ -12,7 +12,9 @@ jobs:
     timeout-minutes: 20
     env:
       # 可选：TG 通知（配置 secrets 后启用；不配置则全部通知通道 no-op）
-      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      # bot token 分段存储兼容：单一 TG_BOT_TOKEN（标准用法）优先；
+      # 部分环境的 secret 有明文长度上限，可拆成 TG_BOT_TOKEN_1..5 由此处拼接
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}${{ secrets.TG_BOT_TOKEN_1 }}${{ secrets.TG_BOT_TOKEN_2 }}${{ secrets.TG_BOT_TOKEN_3 }}${{ secrets.TG_BOT_TOKEN_4 }}${{ secrets.TG_BOT_TOKEN_5 }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
     steps:
       - name: Checkout
