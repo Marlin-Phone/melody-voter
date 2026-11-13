@@ -3,7 +3,7 @@
 基于每 28 天一个结算期（周一 00:00 起）、达标积分 TARGET_POINTS=320 的机制：
 - 每次运行把「已评歌曲数」「预计积分」追加写入 data/ledger/YYYY-MM-DD.jsonl
 - 计算当前结算期（内置锚点 PERIOD_ANCHOR 起每 28 天自动滚动）内的累计已评歌曲与预计积分
-- 输出距离达标线还差多少首歌（按约 3 分/首估算）
+- 输出距离达标线还差多少首歌（每天前 5 首 8 分/首、其余 2 分/首 估算）
 """
 import json
 import os
@@ -17,6 +17,12 @@ PERIOD_ANCHOR = date(2026, 11, 9)
 
 # 每期达标积分线（App 长期固定 320，若平台调整改这里即可，无需配置项）
 TARGET_POINTS = 320
+
+# 积分估算规则（2026-11-13 用户按 App 实际确认）：
+# 每天前 FIRST_FIVE_PER_DAY 首（基础任务）8 分/首，其余（额外任务）2 分/首
+FIRST_FIVE_PER_DAY = 5
+FIRST_FIVE_POINTS = 8
+REST_POINTS = 2
 
 
 class Ledger:
@@ -43,6 +49,14 @@ class Ledger:
         }
         with open(self._file, "a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    def today_done(self, today: date = None) -> int:
+        """今天账本里的完成首数（用于同日去重：已有完成记录则不再向平台提交）"""
+        today = today or date.today()
+        return sum(
+            r.get("done", 0) for r in self._rows()
+            if r.get("ts", "")[:10] == today.isoformat()
+        )
 
     def _rows(self) -> list:
         if not os.path.exists(self._file):
@@ -74,11 +88,19 @@ class Ledger:
         period_rows = [r for r in rows if start <= self._parse_date(r["ts"][:10]) <= end]
         done = sum(r.get("done", 0) for r in period_rows)
         failed = sum(r.get("failed", 0) for r in period_rows)
-        # 简单估算：每评一首约 2~4 分，取中间值 3 分
-        est_points = done * 3
+        # 按天估算积分：每天前 5 首 8 分/首，其余 2 分/首
+        per_day: dict = {}
+        for r in period_rows:
+            per_day[r["ts"][:10]] = per_day.get(r["ts"][:10], 0) + r.get("done", 0)
+        est_points = sum(
+            min(FIRST_FIVE_PER_DAY, d) * FIRST_FIVE_POINTS
+            + max(0, d - FIRST_FIVE_PER_DAY) * REST_POINTS
+            for d in per_day.values()
+        )
         remaining = max(0, self.target - est_points)
-        # 按最近完成的歌曲数估算还需几首（约 3 分/首）
-        need_songs = -(-remaining // 3) if remaining > 0 else 0
+        # 混合均值（分/首）估算还需几首；账本为空时按 5 分/首兜底
+        avg = est_points / done if done else 5.0
+        need_songs = int(-(-remaining // max(avg, 0.5))) if remaining > 0 else 0
         return {
             "start": start.isoformat(),
             "end": end.isoformat(),
@@ -86,6 +108,7 @@ class Ledger:
             "done": done,
             "failed": failed,
             "est_points": est_points,
+            "avg_points_per_song": round(avg, 1),
             "target": self.target,
             "remaining_points": remaining,
             "need_songs": need_songs,
@@ -97,11 +120,11 @@ class Ledger:
             f"===== 结算期报告 [{self.name}] =====",
             f"当前结算期: {s['start']} ~ {s['end']}（剩余 {s['days_left']} 天）",
             f"本期已评歌曲: {s['done']} 首（失败 {s['failed']}）",
-            f"预计积分: ~{s['est_points']}（按 3分/首 估算）",
+            f"预计积分: ~{s['est_points']}（前{FIRST_FIVE_PER_DAY}首{FIRST_FIVE_POINTS}分/首、其余{REST_POINTS}分/首 估算）",
             f"达标线: {s['target']} 分",
         ]
         if s["remaining_points"] > 0:
-            lines.append(f"还差约 {s['remaining_points']} 分 ≈ {s['need_songs']} 首歌（按 3分/首）")
+            lines.append(f"还差约 {s['remaining_points']} 分 ≈ {s['need_songs']} 首歌（按 {s['avg_points_per_song']}分/首 估算）")
         else:
             lines.append("✅ 已超过达标线，本期安全")
         return "\n".join(lines)
