@@ -29,6 +29,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # 结算期账本跨 run 持久化（每次 run 的 workspace 是全新的，
+      # 不缓存的话每期累计只算当次；key 带 run_id 保证 save 必为新 key，
+      # restore-keys 前缀回退到最近一次 save）
+      - name: Restore ledger cache
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          path: data/ledger
+          key: melody-ledger-${{ github.run_id }}
+          restore-keys: |
+            melody-ledger-
+
       - name: Restore config from secret
         run: |
           echo "${{ secrets.SETTING_JSON_B64 }}" | base64 -d > config/setting.json
@@ -44,6 +56,14 @@ jobs:
           export TG_BOT_TOKEN='${{ secrets.TG_BOT_TOKEN }}${{ secrets.TG_BOT_TOKEN_1 }}${{ secrets.TG_BOT_TOKEN_2 }}${{ secrets.TG_BOT_TOKEN_3 }}${{ secrets.TG_BOT_TOKEN_4 }}${{ secrets.TG_BOT_TOKEN_5 }}'
           export TG_CHAT_ID='${{ secrets.TG_CHAT_ID }}'
           python main.py
+
+      - name: Save ledger cache
+        if: always()
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: data/ledger
+          key: melody-ledger-${{ github.run_id }}
 
       # Cookie 失效检测：任一账号 Cookie 无效 -> 本步骤失败 -> job 红叉
       # （python 层此时已主动发过 TG 详细告警）
