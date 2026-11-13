@@ -69,11 +69,21 @@ class DailyTask:
             if task.get("completed"):
                 self.logger.info(f'「{work.get("name")}」已有评分：{task.get("score")}分')
                 continue
-            ok, _ = signer.sign(work, extra_score=build_extra_score(work, pick_score))
-            if ok:
-                result["done"] += 1
-            else:
+            try:
+                ok, _ = signer.sign(work, extra_score=build_extra_score(work, pick_score))
+                if ok:
+                    result["done"] += 1
+                else:
+                    result["failed"] += 1
+            except Exception as e:
+                # 单首异常不炸穿整轮（对齐 ExtraTask 的容错粒度）
+                self.logger.warning(f'处理「{work.get("name")}」失败: {e}')
                 result["failed"] += 1
+            # 拟人化：基础任务与额外任务同等间隔（此前基础5首零间隔连发，是脚本指纹）
+            time.sleep(random.uniform(
+                self.config.get("wait_time_min", 15),
+                self.config.get("wait_time_max", 20),
+            ))
         return result
 
 

@@ -3,8 +3,7 @@
 
 实现：网易云 Web 端扫码登录（weapi），替代已被行为验证码拦截的密码登录方式
 用法：
-  python tools/login.py                # 交互式：选账号位写入
-  python tools/login.py --account main # 直接更新指定 name 的账号
+  python tools/login.py --account main # 更新指定 name 账号的 Cookie（默认 main）
 """
 import argparse
 import json
@@ -88,7 +87,17 @@ def update_config(account_name: str, cookies: dict):
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         config = json.load(f)
 
-    accounts = config.setdefault("accounts", [config] if "Cookie_MUSIC_U" in config else [])
+    # 旧单账号格式迁移：顶层 Cookie 字段并入 accounts 数组（防旧账号孤儿化）
+    if "accounts" not in config:
+        if "Cookie_MUSIC_U" in config:
+            global_keys = {"notify_email", "email_password", "smtp_server", "smtp_port", "debug"}
+            legacy = {k: v for k, v in config.items() if k not in global_keys}
+            legacy.setdefault("name", "main")
+            config["accounts"] = [legacy]
+        else:
+            config["accounts"] = []
+    accounts = config["accounts"]
+
     target = None
     for acc in accounts:
         if acc.get("name") == account_name:

@@ -1,9 +1,9 @@
 """utils: 配置 / 日志 / Cookie校验 / 通知（TG Bot 为主，邮件可选）"""
 import json
 import os
-import random
 import smtplib
 import sys
+from datetime import date, datetime
 from email.mime.text import MIMEText
 
 import requests
@@ -49,13 +49,13 @@ class Logger:
         self.name = name
         os.makedirs(LOG_DIR, exist_ok=True)
         self.file = open(
-            os.path.join(LOG_DIR, f"{name}-{__import__('datetime').date.today()}.log"),
+            os.path.join(LOG_DIR, f"{name}-{date.today()}.log"),
             "a",
             encoding="utf-8",
         )
 
     def _write(self, level: str, msg: str):
-        ts = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         line = f"[{ts}] [{level}] {msg}"
         print(line)
         self.file.write(line + "\n")
@@ -165,11 +165,3 @@ class Notifier:
             self.logger.info(f"通知邮件已发送: {subject}")
         except Exception as e:
             self.logger.error(f"发送通知失败: {e}")
-
-
-def random_delay(a=None, b=None):
-    """随机等待，模拟人工操作防风控"""
-    a = a if a is not None else 15
-    b = b if b is not None else 20
-    t = random.uniform(a, b)
-    return t

@@ -146,9 +146,11 @@ class Signer:
             tags = self.config["_tags_cb"](score) if callable(
                 self.config.get("_tags_cb")
             ) else f"{score}-A-1"
+            # 评论回调直接返回已选定的单条文案（main 层维护当日去重集合）
             comment = self.config["_comment_cb"]() if callable(
                 self.config.get("_comment_cb")
-            ) else ""
+            ) else None
+            comment = comment or ""
 
             # 乐评预检必须在 evaluate 之前（详见 _antispam_comment 注释）
             if comment:
@@ -171,32 +173,58 @@ class Signer:
                 data["extraResource"] = "true"
 
             params = weapi_encrypt(data)
-            resp = self.session.post(
-                url=f"{self.sign_url}?csrf_token={csrf}", data=params, timeout=20
-            ).json()
 
-            if self.debug:
-                self.logger.debug(f"评分响应[{work.get('name')}]: {resp}")
+            def _evaluate():
+                # 网络异常重试一次（单次抖动不再直接烧掉 1 分 + 1 个名额）
+                try:
+                    return self.session.post(
+                        url=f"{self.sign_url}?csrf_token={csrf}",
+                        data=params,
+                        headers={"Referer": "https://mp.music.163.com/"},
+                        timeout=20,
+                    ).json()
+                except Exception as e:
+                    self.logger.warning(
+                        f'「{work.get("name")}」evaluate 网络异常: {e}（5s 后重试一次）'
+                    )
+                    time.sleep(5)
+                    return self.session.post(
+                        url=f"{self.sign_url}?csrf_token={csrf}",
+                        data=params,
+                        headers={"Referer": "https://mp.music.163.com/"},
+                        timeout=20,
+                    ).json()
 
-            code = resp.get("code")
-            if code == 200:
-                self.logger.info(
-                    f'「{work.get("name")}」{work.get("authorName")} 评分完成：{score}分'
-                )
-                return True, resp
-            msg = resp.get("message") or resp.get("msg") or "未知错误"
-            if "频繁" in msg:
-                self.logger.warning("频率限制，等待后重试")
-                time.sleep(random.uniform(30, 60))
-                return self.sign(work, is_extra, extra_score)
-            if code == 405 and "资源状态异常" in msg:
-                self.logger.warning(f'「{work.get("name")}」资源状态异常，跳过')
+            # frequent 限流：有限重试（此前为无界递归，靠外层超时兜底）
+            resp = None
+            for attempt in range(1, 4):
+                resp = _evaluate()
+                if self.debug:
+                    self.logger.debug(f"评分响应[{work.get('name')}]: {resp}")
+
+                code = resp.get("code")
+                if code == 200:
+                    self.logger.info(
+                        f'「{work.get("name")}」{work.get("authorName")} 评分完成：{score}分'
+                    )
+                    return True, resp
+                msg = resp.get("message") or resp.get("msg") or "未知错误"
+                if "频繁" in msg:
+                    self.logger.warning(
+                        f"频率限制，等待后重试（{attempt}/3）「{work.get('name')}」"
+                    )
+                    time.sleep(random.uniform(30, 60))
+                    continue
+                if code == 405 and "资源状态异常" in msg:
+                    self.logger.warning(f'「{work.get("name")}」资源状态异常，跳过')
+                    return False, resp
+                # 今日配额已满（'今日没有更多可评定歌曲啦' 等 405）——整体跳过不重试
+                if code == 405 and "没有更多" in str(msg):
+                    self.logger.info("今日评分配额已满，停止本轮评分")
+                    return False, resp
+                self.logger.error(f"评分失败: {msg} (code={code})")
                 return False, resp
-            # 今日配额已满（'今日没有更多可评定歌曲啦' 等 405）——整体跳过不重试
-            if code == 405 and "没有更多" in str(msg):
-                self.logger.info("今日评分配额已满，停止本轮评分")
-                return False, resp
-            self.logger.error(f"评分失败: {msg} (code={code})")
+            self.logger.error(f'「{work.get("name")}」频繁限流重试 3 次仍失败，放弃')
             return False, resp
         except Exception as e:
             self.logger.error(f'「{work.get("name")}」评分异常: {e}')
