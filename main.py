@@ -17,10 +17,24 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import requests
 
-from src.ledger import Ledger
+from src.ledger import Ledger, TARGET_POINTS
+from src.points import get_partner_points
 from src.signer import ScoreEngine
 from src.tasks import DailyTask, ExtraTask
 from src.utils import Config, CookieValidator, Logger, Notifier
+
+
+def _points_line(session, account: dict, logger) -> str:
+    """平台实际积分行（TG 报告用）；查询失败返回空串"""
+    pts = get_partner_points(session, account.get("Cookie___csrf", ""), logger)
+    if not pts or pts.get("integral") is None:
+        return ""
+    remaining = max(0, TARGET_POINTS - pts["integral"])
+    return (
+        f"平台实际积分: {pts['integral']} 分（{pts.get('title', '?')} 期{pts.get('period', '?')}，"
+        f"{pts.get('status', '?')}）"
+        f"，还差 {remaining} 分"
+    )
 
 
 def run_account(account: dict, debug: bool = False):
@@ -55,11 +69,14 @@ def run_account(account: dict, debug: bool = False):
     done_today = ledger.today_done()
     if done_today > 0:
         logger.info(f"[{name}] 今天已有 {done_today} 首完成记录，跳过评分（防同日重复提交）")
-        notifier.send(
-            f"melody-voter [{name}] 今日已完成，跳过",
+        skip_body = (
             f"账本显示今天已完成 {done_today} 首（更早的 run），本次不重复提交平台\n\n"
-            + ledger.print_report(),
+            + ledger.print_report()
         )
+        pts_line = _points_line(session, account, logger)
+        if pts_line:
+            skip_body = pts_line + "\n\n" + skip_body
+        notifier.send(f"melody-voter [{name}] 今日已完成，跳过", skip_body)
         return {"name": name, "done": 0, "failed": 0, "skipped": True}
 
     # 3. 评分引擎（权重策略 + 评论）
@@ -102,9 +119,13 @@ def run_account(account: dict, debug: bool = False):
     logger.info(f"[{name}] 本次完成 {total_done} 首，失败 {total_failed} 首")
     logger.info(ledger.print_report())
 
+    report_body = f"本次完成 {total_done} 首，失败 {total_failed} 首\n\n" + ledger.print_report()
+    pts_line = _points_line(session, account, logger)
+    if pts_line:
+        report_body = pts_line + "\n\n" + report_body
     notifier.send(
         f"melody-voter [{name}] 每日报告 {datetime.now():%Y-%m-%d}",
-        f"本次完成 {total_done} 首，失败 {total_failed} 首\n\n" + ledger.print_report(),
+        report_body,
     )
     return {"name": name, "done": total_done, "failed": total_failed}
 
