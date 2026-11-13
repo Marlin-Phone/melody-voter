@@ -48,7 +48,21 @@ def run_account(account: dict, debug: bool = False):
         )
         return {"name": name, "error": msg}
 
-    # 2. 评分引擎（权重策略 + 评论）
+    # 2. 同日去重（先探测、快速失败）：账本已有今天完成记录 -> 不再向平台提交。
+    #    同日重复评分调用会被平台批量拒（制造风控信号且白白烧 15s/首 的等待）；
+    #    首次 run 全部失败时 done=0，不影响失败后的当天重试
+    ledger = Ledger(name=name)
+    done_today = ledger.today_done()
+    if done_today > 0:
+        logger.info(f"[{name}] 今天已有 {done_today} 首完成记录，跳过评分（防同日重复提交）")
+        notifier.send(
+            f"melody-voter [{name}] 今日已完成，跳过",
+            f"账本显示今天已完成 {done_today} 首（更早的 run），本次不重复提交平台\n\n"
+            + ledger.print_report(),
+        )
+        return {"name": name, "done": 0, "failed": 0, "skipped": True}
+
+    # 3. 评分引擎（权重策略 + 评论）
     engine = ScoreEngine(
         weights=account.get("score_weights"),
         jitter=account.get("jitter", True),
@@ -61,7 +75,7 @@ def run_account(account: dict, debug: bool = False):
         else (lambda: "")
     )
 
-    # 3. 基础任务
+    # 4. 基础任务
     daily = DailyTask(session, logger, config)
     complete, task_data = daily.get_tasks()
     if not complete and task_data.get("works"):
@@ -69,7 +83,7 @@ def run_account(account: dict, debug: bool = False):
     else:
         daily_result = {"type": "daily", "done": 0, "failed": 0, "id": str(task_data.get("id", ""))}
 
-    # 4. 额外任务（使用每日任务 task_id，新协议需要）
+    # 5. 额外任务（使用每日任务 task_id，新协议需要）
     extra = ExtraTask(session, logger, config)
     try:
         extra_result = extra.run(
@@ -82,8 +96,7 @@ def run_account(account: dict, debug: bool = False):
     total_done = daily_result.get("done", 0) + extra_result.get("done", 0)
     total_failed = daily_result.get("failed", 0) + extra_result.get("failed", 0)
 
-    # 5. 记账 + 报告（结算期锚点与达标线均为 Ledger 内置常量，自动计算）
-    ledger = Ledger(name=name)
+    # 6. 记账 + 报告（结算期锚点与达标线均为 Ledger 内置常量，自动计算）
     if total_done or total_failed:
         ledger.record(total_done, total_failed, note="auto")
     logger.info(f"[{name}] 本次完成 {total_done} 首，失败 {total_failed} 首")
