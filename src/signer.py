@@ -91,6 +91,40 @@ class Signer:
         self.config = config
         self.debug = debug
         self.sign_url = "https://interface.music.163.com/weapi/music/partner/work/evaluate"
+        self.antispam_url = "https://interface.music.163.com/weapi/music/partner/custom/content/antispam"
+
+    def _antispam_comment(self, comment: str, work_id, work_name: str = "") -> None:
+        """乐评内容安审预检（Web 端 HAR 流程：先 antispam、后 evaluate）。
+
+        实证（2026-11-13）：跳过预检直接 evaluate 时评论会被贴到歌曲页，
+        但平台不建立合伙人任务评论记录（songCommentInfo.commentId=None），
+        「每日完成打分歌曲的留言 +1/首（上限20分）」不记分；预检须在评分前进行。
+        本方法任何失败都静默降级（仅告警），绝不影响评分主流程。
+        """
+        try:
+            csrf = str(self.session.cookies.get("__csrf", ""))
+            payload = {
+                "type": "comment",
+                "content": comment,
+                "taskId": self.task_id,
+                "workId": str(work_id),
+                "csrf_token": csrf,
+            }
+            params = weapi_encrypt(payload)
+            resp = self.session.post(
+                url=f"{self.antispam_url}?csrf_token={csrf}",
+                data=params,
+                headers={"Referer": "https://mp.music.163.com/"},
+                timeout=20,
+            ).json()
+            if resp.get("code") == 200:
+                self.logger.debug(f'乐评预检通过「{work_name}」')
+            else:
+                self.logger.warning(
+                    f'乐评预检未通过（不影响评分）: {resp.get("message", resp.get("msg", ""))}'
+                )
+        except Exception as e:
+            self.logger.warning(f'乐评预检异常（不影响评分）: {e}')
 
     def sign(self, work: dict, is_extra: bool = False, extra_score: str = "{}") -> Tuple[bool, dict]:
         """
@@ -115,6 +149,10 @@ class Signer:
             comment = self.config["_comment_cb"]() if callable(
                 self.config.get("_comment_cb")
             ) else ""
+
+            # 乐评预检必须在 evaluate 之前（详见 _antispam_comment 注释）
+            if comment:
+                self._antispam_comment(comment, work["id"], work.get("name", ""))
 
             data = {
                 "taskId": self.task_id,
