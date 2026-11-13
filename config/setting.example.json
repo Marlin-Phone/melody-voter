@@ -8,6 +8,8 @@
       "wait_time_max": 20,
       "score_weights": {"1": 10, "2": 10, "3": 15, "4": 25, "5": 40},
       "extra_task_limit": 0,
+      "stop_at_target": true,
+      "target_points": 320,
       "enable_comment": true,
       "comment_pool": [
         "副歌一出来整个人都精神了，单曲循环已经安排上",

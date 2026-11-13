@@ -25,12 +25,11 @@ from src.tasks import DailyTask, ExtraTask
 from src.utils import Config, CookieValidator, Logger, Notifier
 
 
-def _points_line(session, account: dict, logger) -> str:
-    """平台实际积分行（TG 报告用）；查询失败返回空串"""
-    pts = get_partner_points(session, account.get("Cookie___csrf", ""), logger)
+def _points_line(pts, target: int = TARGET_POINTS) -> str:
+    """平台实际积分行（TG 报告用）；查询失败/None 返回空串"""
     if not pts or pts.get("integral") is None:
         return ""
-    remaining = max(0, TARGET_POINTS - pts["integral"])
+    remaining = max(0, target - pts["integral"])
     return (
         f"平台实际积分: {pts['integral']} 分（{pts.get('title', '?')} 期{pts.get('period', '?')}，"
         f"{pts.get('status', '?')}）"
@@ -63,10 +62,25 @@ def run_account(account: dict, debug: bool = False):
         )
         return {"name": name, "error": msg}
 
-    # 2. 同日去重（先探测、快速失败）：账本已有今天完成记录 -> 不再向平台提交。
+    ledger = Ledger(name=name)
+
+    # 2. 达标自动停止：本期积分 ≥ 达标线 → 不评分（防超额刷分触发风控）。
+    #    新结算期平台清零后自动恢复，无需手动干预；积分查询失败时放行、不误停
+    target = int(account.get("target_points", TARGET_POINTS))
+    pts = get_partner_points(session, account.get("Cookie___csrf", ""), logger)
+    cur = pts.get("integral") if pts else None
+    if account.get("stop_at_target", True) and cur is not None and cur >= target:
+        logger.info(f"[{name}] 本期积分 {cur}/{target} 已达标，自动停止评分（防超额刷分）")
+        notifier.send(
+            f"melody-voter [{name}] 已达标，自动跳过",
+            f"平台实际积分 {cur}/{target} 已达标，本日不评分（stop_at_target）\n"
+            f"新结算期积分清零后将自动恢复\n\n" + ledger.print_report(),
+        )
+        return {"name": name, "done": 0, "failed": 0, "skipped": "target_reached", "integral": cur}
+
+    # 3. 同日去重（先探测、快速失败）：账本已有今天完成记录 -> 不再向平台提交。
     #    同日重复评分调用会被平台批量拒（制造风控信号且白白烧 15s/首 的等待）；
     #    首次 run 全部失败时 done=0，不影响失败后的当天重试
-    ledger = Ledger(name=name)
     done_today = ledger.today_done()
     if done_today > 0:
         logger.info(f"[{name}] 今天已有 {done_today} 首完成记录，跳过评分（防同日重复提交）")
@@ -74,13 +88,13 @@ def run_account(account: dict, debug: bool = False):
             f"账本显示今天已完成 {done_today} 首（更早的 run），本次不重复提交平台\n\n"
             + ledger.print_report()
         )
-        pts_line = _points_line(session, account, logger)
+        pts_line = _points_line(pts, target)
         if pts_line:
             skip_body = pts_line + "\n\n" + skip_body
         notifier.send(f"melody-voter [{name}] 今日已完成，跳过", skip_body)
         return {"name": name, "done": 0, "failed": 0, "skipped": True}
 
-    # 3. 评分引擎（权重策略 + 评论）
+    # 4. 评分引擎（权重策略 + 评论）
     engine = ScoreEngine(
         weights=account.get("score_weights"),
         jitter=account.get("jitter", True),
@@ -101,7 +115,7 @@ def run_account(account: dict, debug: bool = False):
         used_comments.add(pick)
         return pick
 
-    # 4. 基础任务
+    # 5. 基础任务
     daily = DailyTask(session, logger, config)
     complete, task_data = daily.get_tasks()
     if not complete and task_data.get("works"):
@@ -109,7 +123,7 @@ def run_account(account: dict, debug: bool = False):
     else:
         daily_result = {"type": "daily", "done": 0, "failed": 0, "id": str(task_data.get("id", ""))}
 
-    # 5. 额外任务（使用每日任务 task_id，新协议需要）
+    # 6. 额外任务（使用每日任务 task_id，新协议需要）
     extra = ExtraTask(session, logger, config)
     try:
         extra_result = extra.run(
@@ -127,14 +141,14 @@ def run_account(account: dict, debug: bool = False):
     total_done = daily_result.get("done", 0) + extra_result.get("done", 0)
     total_failed = daily_result.get("failed", 0) + extra_result.get("failed", 0)
 
-    # 6. 记账 + 报告（结算期锚点与达标线均为 Ledger 内置常量，自动计算）
+    # 7. 记账 + 报告（结算期锚点与达标线均为 Ledger 内置常量，自动计算）
     if total_done or total_failed:
         ledger.record(total_done, total_failed, note="auto")
     logger.info(f"[{name}] 本次完成 {total_done} 首，失败 {total_failed} 首")
     logger.info(ledger.print_report())
 
     report_body = f"本次完成 {total_done} 首，失败 {total_failed} 首\n\n" + ledger.print_report()
-    pts_line = _points_line(session, account, logger)
+    pts_line = _points_line(pts, target)
     if pts_line:
         report_body = pts_line + "\n\n" + report_body
     notifier.send(
