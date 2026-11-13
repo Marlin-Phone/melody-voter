@@ -7,18 +7,19 @@
 配置：复制 config/setting.example.json 为 config/setting.json 并填写 Cookie
 """
 import argparse
+import json
 import os
 import random
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import requests
 
 from src.ledger import Ledger, TARGET_POINTS
-from src.points import get_partner_points
+from src.points import get_partner_points, query_pick_rights
 from src.signer import ScoreEngine
 from src.tasks import DailyTask, ExtraTask
 from src.utils import Config, CookieValidator, Logger, Notifier
@@ -86,11 +87,19 @@ def run_account(account: dict, debug: bool = False):
     )
     pick_score = engine.pick_score
     tags_cb = engine.tags_for
-    comment_cb = (
-        (lambda: engine.comment_for(config["_comment_pool"]))
-        if account.get("enable_comment", True) and config["_comment_pool"]
-        else (lambda: "")
-    )
+
+    # 乐评选取：当日不重复（重复模板是官方「恶意刷分」条款 #2 的目标特征；
+    # 池 32 条 ≥ 每日 20 条，正常轮不到重复，池耗尽时兜底随机）
+    used_comments = set()
+
+    def comment_cb():
+        if not (account.get("enable_comment", True) and config["_comment_pool"]):
+            return ""
+        pool = config["_comment_pool"]
+        unused = [c for c in pool if c not in used_comments]
+        pick = random.choice(unused) if unused else random.choice(pool)
+        used_comments.add(pick)
+        return pick
 
     # 4. 基础任务
     daily = DailyTask(session, logger, config)
@@ -110,6 +119,11 @@ def run_account(account: dict, debug: bool = False):
         logger.error(f"额外任务失败: {e}")
         extra_result = {"type": "extra", "done": 0, "failed": 0}
 
+    # pick-right 诊断探针（只读、失败静默）：为「大众分一致性」策略攒样本
+    pr = query_pick_rights(session, account.get("Cookie___csrf", ""), logger)
+    if pr is not None:
+        logger.info(f"pick-right 探针: {json.dumps(pr, ensure_ascii=False)[:500]}")
+
     total_done = daily_result.get("done", 0) + extra_result.get("done", 0)
     total_failed = daily_result.get("failed", 0) + extra_result.get("failed", 0)
 
@@ -124,7 +138,7 @@ def run_account(account: dict, debug: bool = False):
     if pts_line:
         report_body = pts_line + "\n\n" + report_body
     notifier.send(
-        f"melody-voter [{name}] 每日报告 {datetime.now():%Y-%m-%d}",
+        f"melody-voter [{name}] 每日报告 {(datetime.now() + timedelta(hours=8)):%Y-%m-%d}",
         report_body,
     )
     return {"name": name, "done": total_done, "failed": total_failed}

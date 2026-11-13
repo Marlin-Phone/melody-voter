@@ -44,3 +44,27 @@ def get_partner_points(session, csrf: str, logger=None) -> dict:
         if logger:
             logger.warning(f"平台积分查询失败（不影响主流程）: {e}")
         return None
+
+
+def query_pick_rights(session, csrf: str, logger=None) -> dict:
+    """评分「大众分」只读探针（crossgg partner.go: song/pick/right/get）。
+
+    上游对响应结构也未定论（RespData 空 struct + todo 注释），故只做诊断：
+    把原始响应打进日志攒样本，供后续判断「质量分 = 与大众分一致性」策略
+    是否有 API 依据。只读、无业务参数，任何失败静默返回 None。
+    """
+    try:
+        params = weapi_encrypt({"csrf_token": csrf})
+        resp = session.post(
+            f"https://interface.music.163.com/weapi/music/partner/song/pick/right/get?csrf_token={csrf}",
+            data=params,
+            headers={"Referer": REFERER},
+            timeout=20,
+        ).json()
+        if resp.get("code") != 200:
+            raise RuntimeError(f"pick/right code={resp.get('code')} msg={resp.get('message', resp.get('msg', ''))}")
+        return {"code": resp.get("code"), "data": resp.get("data")}
+    except Exception as e:
+        if logger:
+            logger.debug(f"pick-right 探针失败（不影响主流程）: {e}")
+        return None
