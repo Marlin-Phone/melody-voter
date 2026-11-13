@@ -28,6 +28,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # TEMP 调试：验证新 secret 对 runner 的可见性（只打印长度与 chat id，不打印 token）
+      - name: Debug secret visibility (TEMP)
+        run: |
+          echo "CHATID=[${{ secrets.TG_CHAT_ID }}]"
+          echo -n "TOKEN1_LEN="; echo -n "${{ secrets.TG_BOT_TOKEN_1 }}" | wc -c
+          echo -n "TOKEN5_LEN="; echo -n "${{ secrets.TG_BOT_TOKEN_5 }}" | wc -c
+
       - name: Restore config from secret
         run: |
           echo "${{ secrets.SETTING_JSON_B64 }}" | base64 -d > config/setting.json
