@@ -9,7 +9,7 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25  # 基础任务补拟人间隔后总时长 ~13-18min，留余量
     env:
       # 可选：TG 通知（配置后启用；不配置则全部通知通道 no-op）
       # bot token 支持两种存法：单一 TG_BOT_TOKEN（标准）或拆段 TG_BOT_TOKEN_1..5
