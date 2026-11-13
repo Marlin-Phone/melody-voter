@@ -12,8 +12,8 @@ jobs:
     timeout-minutes: 20
     env:
       # 可选：TG 通知（配置 secrets 后启用；不配置则全部通知通道 no-op）
-      # bot token 分段存储兼容：单一 TG_BOT_TOKEN（标准用法）优先；
-      # 部分环境的 secret 有明文长度上限，可拆成 TG_BOT_TOKEN_1..5 由此处拼接
+      # bot token 支持两种存法：单一 TG_BOT_TOKEN（标准）或拆段 TG_BOT_TOKEN_1..5
+      # （部分环境 secret 有明文长度上限），未配置的那半表达式展开为空串
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}${{ secrets.TG_BOT_TOKEN_1 }}${{ secrets.TG_BOT_TOKEN_2 }}${{ secrets.TG_BOT_TOKEN_3 }}${{ secrets.TG_BOT_TOKEN_4 }}${{ secrets.TG_BOT_TOKEN_5 }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
     steps:
@@ -38,6 +38,10 @@ jobs:
           # 清掉当天旧日志（含此前失败的 Cookie 失效记录），确保检测只针对本次运行
           # 否则同一天先失败、更新 cookie 后再跑一次会被历史 ERROR 误杀
           rm -f data/logs/*$(date +%F).log
+          # TG 通知凭据：step 内联表达式展开（部分环境 job 级 env 不展开 secrets，
+          # 故在此重新 export 保证 python 进程一定拿到值；job 级 env 作双保险）
+          export TG_BOT_TOKEN='${{ secrets.TG_BOT_TOKEN }}${{ secrets.TG_BOT_TOKEN_1 }}${{ secrets.TG_BOT_TOKEN_2 }}${{ secrets.TG_BOT_TOKEN_3 }}${{ secrets.TG_BOT_TOKEN_4 }}${{ secrets.TG_BOT_TOKEN_5 }}'
+          export TG_CHAT_ID='${{ secrets.TG_CHAT_ID }}'
           python main.py
 
       # Cookie 失效检测：任一账号 Cookie 无效 -> 本步骤失败 -> job 红叉
@@ -56,6 +60,8 @@ jobs:
         if: failure()
         continue-on-error: true
         run: |
+          TG_BOT_TOKEN='${{ secrets.TG_BOT_TOKEN }}${{ secrets.TG_BOT_TOKEN_1 }}${{ secrets.TG_BOT_TOKEN_2 }}${{ secrets.TG_BOT_TOKEN_3 }}${{ secrets.TG_BOT_TOKEN_4 }}${{ secrets.TG_BOT_TOKEN_5 }}'
+          TG_CHAT_ID='${{ secrets.TG_CHAT_ID }}'
           if grep -qE "Cookie无效|Cookie失效|验证失败" data/logs/*$(date +%F).log 2>/dev/null; then
             echo "Cookie 失效已在 python 层通知过，跳过重复通知"
             exit 0
