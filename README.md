@@ -12,7 +12,7 @@
 | 👥 多账号支持 | `accounts` 数组，账号间随机间隔防关联 |
 | 📊 积分账本 + 达标提醒 | 本地记录每日完成量，按 28 天结算期估算距达标线还差几首 |
 | 📱 扫码登录工具 | 本机二维码登录，自动写回本地 Cookie（仅本机/家庭网络可用，服务器会被风控拦截） |
-| 🔔 邮件通知 | Cookie 失效 / 执行失败 / 完成摘要（SMTP） |
+| 🔔 TG Bot 通知 | 每日报告 / Cookie 失效 / 运行异常 / 失败兜底告警（GitHub Secrets 注入），邮件通道可选保留 |
 
 ## 目录结构
 
@@ -63,8 +63,13 @@ melody-voter/
    base64 -w0 config/setting.json   # macOS/Linux
    # Windows PowerShell: [Convert]::ToBase64String([IO.File]::ReadAllBytes("config\setting.json"))
    ```
-3. Actions 页可手动 Run workflow 测试；之后每天自动执行
-4. Cookie 约两周过期，失效后：
+3. （可选）配置 TG Bot 通知：再新增两个 Secrets——
+   - `TG_BOT_TOKEN`：任意 Telegram bot 的 token（@BotFather 创建）
+   - `TG_CHAT_ID`：接收通知的 chat ID
+
+   配置后每次运行结束会推 TG 消息（完成/失败数 + 当前结算期达标进度）；Cookie 失效、运行异常时推详细告警；workflow 其他环节失败时补发兜底告警。不配置则不打扰（本地跑同理：未设 `TG_BOT_TOKEN`/`TG_CHAT_ID` 环境变量时静默跳过）
+4. Actions 页可手动 Run workflow 测试；之后每天自动执行
+5. Cookie 约两周过期，失效后：
    1. 在**你的电脑**（家庭网络）重新 `python tools/login.py` 扫码更新本地 `config/setting.json`
    2. 重新执行上面的 base64 命令，把新值覆盖到 Secret `SETTING_JSON_B64`
    3. 手动 Run workflow 验证（可看 Actions 日志确认 Cookie 有效）
@@ -97,6 +102,8 @@ melody-voter/
   "debug": false                      // 调试模式：true 输出更多日志（MELODY_VOTER_DEBUG=1 等效）
 }
 ```
+
+> TG 通知的 bot token / chat ID **不写进本配置文件**，而是经 GitHub Actions Secrets（`TG_BOT_TOKEN` / `TG_CHAT_ID`）注入环境变量；本地运行时同样通过这两个环境变量开启。
 
 ## 结算期提醒逻辑
 
