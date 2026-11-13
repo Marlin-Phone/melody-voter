@@ -10,6 +10,10 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # 可选：TG 通知（配置 secrets 后启用；不配置则全部通知通道 no-op）
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,11 +39,28 @@ jobs:
           python main.py
 
       # Cookie 失效检测：任一账号 Cookie 无效 -> 本步骤失败 -> job 红叉
-      # （触发 GitHub 失败通知邮件，作为 cookie 过期的告警通道）
+      # （python 层此时已主动发过 TG 详细告警）
       - name: Fail if cookie expired
         if: always()
         run: |
           if grep -qE "Cookie无效|Cookie失效|验证失败" data/logs/*$(date +%F).log 2>/dev/null; then
             echo "::error::检测到 Cookie 已失效！请在本地更新 config/setting.json 后重新上传 SETTING_JSON_B64 secret"
             exit 1
+          fi
+
+      # 兜底：上方任一环节失败（依赖安装、secret 缺失、python 崩溃等）时补发 TG 失败告警
+      # Cookie 失效场景 python 层已发过详细通知，此处去重不重复推
+      - name: Notify failure (Telegram)
+        if: failure()
+        continue-on-error: true
+        run: |
+          if grep -qE "Cookie无效|Cookie失效|验证失败" data/logs/*$(date +%F).log 2>/dev/null; then
+            echo "Cookie 失效已在 python 层通知过，跳过重复通知"
+            exit 0
+          fi
+          if [ -n "$TG_BOT_TOKEN" ] && [ -n "$TG_CHAT_ID" ]; then
+            curl -fsS -m 20 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${TG_CHAT_ID}" \
+              --data-urlencode "text=melody-voter daily-sync 运行失败，详见 Actions 日志" \
+              || echo "::warning::TG 失败通知发送失败（网络或凭据问题）"
           fi
