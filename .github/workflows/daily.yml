@@ -4,7 +4,13 @@ on:
   schedule:
     # 每天 09:00 北京时间（GitHub cron 为 UTC：9:00+8 = 1:00 UTC）
     - cron: '0 1 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      # TEMP（2026-11-13 一次性）：补注 11-11 漏记账本；用完即删
+      once:
+        description: "backfill-11-11（临时，填 yes 仅跑一次）"
+        required: false
+        default: ""
 
 jobs:
   run:
@@ -45,6 +51,17 @@ jobs:
         run: |
           echo "${{ secrets.SETTING_JSON_B64 }}" | base64 -d > config/setting.json
           test -s config/setting.json || { echo "::error::SETTING_JSON_B64 secret 缺失或无效"; exit 1; }
+
+      # TEMP（2026-11-13 一次性）：11-11 曾有一次成功的 schedule run（42980890661，20 首）
+      # 当时未注入账本，导致本期少记 20 首（App 实际 115 分 = 5 天×23）。
+      # 仅当手动 dispatch 且 inputs.once=yes 时执行；跑完本步骤与 once input 须立即删除。
+      - name: "TEMP: backfill 11-11 ledger (20 首)"
+        if: ${{ inputs.once == 'yes' }}
+        run: |
+          mkdir -p data/ledger
+          echo '{"ts":"2026-11-11T00:00:00","done":20,"failed":0,"note":"backfill: Actions run 42980890661 (11-11 07:37Z)"}' >> data/ledger/main.jsonl
+          echo '--- ledger now:'
+          cat data/ledger/main.jsonl
 
       - name: Run daily tasks
         run: |
