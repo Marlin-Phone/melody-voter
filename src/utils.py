@@ -100,8 +100,9 @@ class CookieValidator:
 class Notifier:
     """通知：Telegram Bot（推荐）+ 可选 SMTP 邮件
 
-    - TG 通道读环境变量 TG_BOT_TOKEN / TG_CHAT_ID（GitHub Actions 里以
-      secrets 注入）；未配置时静默降级为 no-op，不影响主流程
+    - TG 凭据来源（按优先级）：环境变量 TG_BOT_TOKEN / TG_CHAT_ID
+      （GitHub Actions 以 secrets 注入），或 config/setting.json 全局字段
+      tg_bot_token / tg_chat_id；均未配置时静默降级为 no-op
     - 邮件通道仅在配置了 notify_email 时启用
     - 任一发失败只记日志、不抛异常，不阻断评分主流程
     """
@@ -109,8 +110,14 @@ class Notifier:
     def __init__(self, config: Config, logger: Logger):
         self.config = config
         self.logger = logger
-        self.tg_token = os.environ.get("TG_BOT_TOKEN", "").strip()
-        self.tg_chat_id = os.environ.get("TG_CHAT_ID", "").strip()
+        self.tg_token = (
+            os.environ.get("TG_BOT_TOKEN", "").strip()
+            or (config.global_get("tg_bot_token") or "").strip()
+        )
+        self.tg_chat_id = (
+            os.environ.get("TG_CHAT_ID", "").strip()
+            or (config.global_get("tg_chat_id") or "").strip()
+        )
         self.tg_enabled = bool(self.tg_token and self.tg_chat_id)
         self.email_enabled = bool(config.global_get("notify_email"))
 
