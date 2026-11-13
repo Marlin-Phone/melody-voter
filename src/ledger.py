@@ -3,7 +3,7 @@
 基于每 28 天一个结算期（周一 00:00 起）、达标积分 TARGET_POINTS=320 的机制：
 - 每次运行把「已评歌曲数」「预计积分」追加写入 data/ledger/YYYY-MM-DD.jsonl
 - 计算当前结算期（内置锚点 PERIOD_ANCHOR 起每 28 天自动滚动）内的累计已评歌曲与预计积分
-- 输出距离达标线还差多少首歌（按平台官方评分表：基础5首共8分+额外1分/首+评论1分/首 估算）
+- 输出距离达标线还差多少首歌（按实际给分：基础5首共8分+额外1分/首 = 满日23分，乐评未记分）
 """
 import json
 import os
@@ -18,19 +18,21 @@ PERIOD_ANCHOR = date(2026, 11, 9)
 # 每期达标积分线（App 长期固定 320，若平台调整改这里即可，无需配置项）
 TARGET_POINTS = 320
 
-# 积分估算规则（2026-11-13 实测平台接口 daily/task/get 的 dailyTaskScoreLimit 官方评分表）：
-#   dailyBasicTaskScore=8          每天基础任务 5 首 = 一共 8 分（不是每首 8 分，用户 11-13 纠正）
+# 积分估算规则（2026-11-13 实测平台接口 daily/task/get 的 dailyTaskScoreLimit 官方评分表
+# + 用户 App 历史记录校准：每个活跃日恰好 23 分 = 基础 8 + 额外 15×1，乐评 0 分）：
+#   dailyBasicTaskScore=8          每天基础任务 5 首 = 一共 8 分（不是每首 8 分）
 #   dailyExtendEvaluateScore=1    额外评分 1 分/首，日上限 15（dailyMaxExtendEvaluateScore）
-#   singleCommentScore=1          评论 1 分/首（机器人每首都带评论）
-#   singleBijiScore=2 / 质量分≤4 / 推荐日上限 9 → 浮动项，估算不计（估算偏上限）
+#   singleCommentScore=1          乐评 1 分/首 → **实际 0**：机器人提交的乐评未成功记录/未记分
+#                                 （用户 App 历史逐日 23 分实锤，2026-11-13），估算不计
+#   singleBijiScore=2 / 质量分≤4 / 推荐日上限 9 → 浮动项，估算不计
 BASE_SONGS_PER_DAY = 5
 BASE_POINTS_PER_DAY = 8
 EXTEND_POINTS_PER_SONG = 1
-COMMENT_POINTS_PER_SONG = 1
+COMMENT_POINTS_PER_SONG = 0
 
 
 def _day_points(d: int) -> float:
-    """某评了 d 首的当天估算积分（基础 8 分按前 5 首线性折算，额外 1 分/首，评论 1 分/首）"""
+    """某评了 d 首的当天估算积分（基础 8 分按前 5 首线性折算，额外 1 分/首，乐评 0 分）"""
     if d <= 0:
         return 0
     base = BASE_POINTS_PER_DAY * min(d, BASE_SONGS_PER_DAY) / BASE_SONGS_PER_DAY
@@ -100,7 +102,7 @@ class Ledger:
         period_rows = [r for r in rows if start <= self._parse_date(r["ts"][:10]) <= end]
         done = sum(r.get("done", 0) for r in period_rows)
         failed = sum(r.get("failed", 0) for r in period_rows)
-        # 按天估算积分：官方表 基础5首共8分 + 额外1分/首 + 评论1分/首（浮动项不计，偏上限）
+        # 按天估算积分：实际规则 基础5首共8分 + 额外1分/首（乐评未记分，用户 App 历史校准）
         per_day: dict = {}
         for r in period_rows:
             per_day[r["ts"][:10]] = per_day.get(r["ts"][:10], 0) + r.get("done", 0)
@@ -128,7 +130,7 @@ class Ledger:
             f"===== 结算期报告 [{self.name}] =====",
             f"当前结算期: {s['start']} ~ {s['end']}（剩余 {s['days_left']} 天）",
             f"本期已评歌曲: {s['done']} 首（失败 {s['failed']}）",
-            f"预计积分: ~{s['est_points']}（官方表上限：基础5首共8分+额外1分/首+评论1分/首，质量/推荐浮动项未计）",
+            f"预计积分: ~{s['est_points']}（实际规则：基础5首共8分+额外1分/首，乐评未记分（用户历史校准），质量/推荐浮动项未计）",
             f"达标线: {s['target']} 分",
         ]
         if s["remaining_points"] > 0:
