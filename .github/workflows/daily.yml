@@ -11,10 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      # 可选：TG 通知（配置后启用；不配置则全部通知通道 no-op）
-      # bot token 支持两种存法：单一 TG_BOT_TOKEN（标准）或拆段 TG_BOT_TOKEN_1..5
-      # （部分环境 secret 有明文长度上限），未配置的那半表达式展开为空串
-      # 另可在 setting.json 配 tg_bot_token/tg_chat_id 全局字段（代码侧 env 优先、config 兜底）
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}${{ secrets.TG_BOT_TOKEN_1 }}${{ secrets.TG_BOT_TOKEN_2 }}${{ secrets.TG_BOT_TOKEN_3 }}${{ secrets.TG_BOT_TOKEN_4 }}${{ secrets.TG_BOT_TOKEN_5 }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
     steps:
@@ -29,9 +25,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # 结算期账本跨 run 持久化（每次 run 的 workspace 是全新的，
-      # 不缓存的话每期累计只算当次；key 带 run_id 保证 save 必为新 key，
-      # restore-keys 前缀回退到最近一次 save）
       - name: Restore ledger cache
         uses: actions/cache/restore@v4
         continue-on-error: true
@@ -46,13 +39,26 @@ jobs:
           echo "${{ secrets.SETTING_JSON_B64 }}" | base64 -d > config/setting.json
           test -s config/setting.json || { echo "::error::SETTING_JSON_B64 secret 缺失或无效"; exit 1; }
 
+      # TEMP：线上配置指纹（与本地文件比对后决定是否可由 agent 直接覆盖 secret）
+      - name: Debug config fingerprint (TEMP)
+        run: |
+          sha256sum config/setting.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('config/setting.json'))
+          a = d['accounts'][0]
+          print('top_keys:', sorted(k for k in d if k != 'accounts'))
+          print('acc_keys:', sorted(a.keys()))
+          print('MUSIC_U:', a.get('Cookie_MUSIC_U', '')[:12], 'len', len(a.get('Cookie_MUSIC_U', '')))
+          print('csrf:', a.get('Cookie___csrf', '')[:8], 'len', len(a.get('Cookie___csrf', '')))
+          print('weights:', a.get('score_weights'))
+          print('pool:', len(a.get('comment_pool', [])), 'extra_limit:', a.get('extra_task_limit'), 'comment:', a.get('enable_comment'))
+          print('jitter:', a.get('jitter'), 'wait:', a.get('wait_time_min'), a.get('wait_time_max'), 'name:', a.get('name'))
+          PY
+
       - name: Run daily tasks
         run: |
-          # 清掉当天旧日志（含此前失败的 Cookie 失效记录），确保检测只针对本次运行
-          # 否则同一天先失败、更新 cookie 后再跑一次会被历史 ERROR 误杀
           rm -f data/logs/*$(date +%F).log
-          # TG 通知凭据：step 内联表达式再 export 一遍（部分环境 job 级 env 不展开 secrets；
-          # python 侧还有 setting.json 的 tg_bot_token/tg_chat_id 字段兜底）
           export TG_BOT_TOKEN='${{ secrets.TG_BOT_TOKEN }}${{ secrets.TG_BOT_TOKEN_1 }}${{ secrets.TG_BOT_TOKEN_2 }}${{ secrets.TG_BOT_TOKEN_3 }}${{ secrets.TG_BOT_TOKEN_4 }}${{ secrets.TG_BOT_TOKEN_5 }}'
           export TG_CHAT_ID='${{ secrets.TG_CHAT_ID }}'
           python main.py
@@ -65,8 +71,6 @@ jobs:
           path: data/ledger
           key: melody-ledger-${{ github.run_id }}
 
-      # Cookie 失效检测：任一账号 Cookie 无效 -> 本步骤失败 -> job 红叉
-      # （python 层此时已主动发过 TG 详细告警）
       - name: Fail if cookie expired
         if: always()
         run: |
@@ -75,8 +79,6 @@ jobs:
             exit 1
           fi
 
-      # 兜底：上方任一环节失败（依赖安装、secret 缺失、python 崩溃等）时补发 TG 失败告警
-      # Cookie 失效场景 python 层已发过详细通知，此处去重不重复推
       - name: Notify failure (Telegram)
         if: failure()
         continue-on-error: true
