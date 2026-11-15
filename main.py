@@ -26,14 +26,18 @@ from src.utils import Config, CookieValidator, Logger, Notifier
 
 
 def _points_line(pts, target: int = TARGET_POINTS) -> str:
-    """平台实际积分行（TG 报告用）；查询失败/None 返回空串"""
+    """平台实计块（TG 报告用）：结论 + 进度条 + 还差；查询失败/None 返回空串"""
     if not pts or pts.get("integral") is None:
         return ""
-    remaining = max(0, target - pts["integral"])
-    return (
-        f"平台实际积分: {pts['integral']} 分（{pts.get('title', '?')} 期{pts.get('period', '?')}，"
-        f"{pts.get('status', '?')}）"
-        f"，还差 {remaining} 分"
+    cur = pts["integral"]
+    remaining = max(0, target - cur)
+    pct = min(100, round(cur * 100 / target))
+    filled = round(pct / 10)
+    bar = "▓" * filled + "░" * (10 - filled)
+    head = "🎉 已达标" if cur >= target else "📊 平台实计"
+    meta = f"（{pts.get('title', '?')} 期{pts.get('period', '?')} {pts.get('status', '?')}）"
+    return "\n".join(
+        [f"{head}: {cur} / {target} 分（还差 {remaining}）{meta}", f"   [{bar}] {pct}%"]
     )
 
 
@@ -71,10 +75,12 @@ def run_account(account: dict, debug: bool = False):
     cur = pts.get("integral") if pts else None
     if account.get("stop_at_target", True) and cur is not None and cur >= target:
         logger.info(f"[{name}] 本期积分 {cur}/{target} 已达标，自动停止评分（防超额刷分）")
+        pts_line = _points_line(pts, target)
         notifier.send(
             f"melody-voter [{name}] 已达标，自动跳过",
-            f"平台实际积分 {cur}/{target} 已达标，本日不评分（stop_at_target）\n"
-            f"新结算期积分清零后将自动恢复\n\n" + ledger.print_report(),
+            (pts_line + "\n\n" if pts_line else "")
+            + "本日不评分（stop_at_target，防超额刷分）；新结算期积分清零后自动恢复\n\n"
+            + ledger.print_report(),
         )
         return {"name": name, "done": 0, "failed": 0, "skipped": "target_reached", "integral": cur}
 
@@ -183,7 +189,7 @@ def main():
     if args.report:
         for acc in config.accounts:
             ledger = Ledger(name=acc.get("name", "default"))
-            print(ledger.print_report())
+            print(ledger.print_report(show_est=True))
             print()
         return
 

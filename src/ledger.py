@@ -27,16 +27,25 @@ TARGET_POINTS = 320
 #   singleBijiScore=2 / 质量分≤4 / 推荐日上限 9 → 浮动项，估算不计
 BASE_SONGS_PER_DAY = 5
 BASE_POINTS_PER_DAY = 8
-EXTEND_POINTS_PER_SONG = 1
-COMMENT_POINTS_PER_SONG = 1
+EXTEND_POINTS_PER_SONG = 1          # 额外评分 1 分/首
+EXTEND_SONGS_PER_DAY = 15           # 额外评分日上限（官方 dailyMaxExtendEvaluateScore）
+COMMENT_POINTS_PER_SONG = 1         # 乐评 1 分/首
+COMMENT_SONGS_PER_DAY = 20          # 乐评日上限（每天最多评 20 首 = 至多 20 条乐评）
 
 
 def _day_points(d: int) -> float:
-    """某评了 d 首的当天估算积分（基础 8 分按前 5 首线性折算，额外 1 分/首，乐评 1 分/首）"""
+    """某评了 d 首的当天估算积分（基础 8 分按前 5 首线性折算，额外 1 分/首(上限15)，乐评 1 分/首(上限20)）。
+
+    通过每日可评 20 首（基础5+额外15）即封顶；超过的日子按官方日上限折算，避免高估。
+    """
     if d <= 0:
         return 0
     base = BASE_POINTS_PER_DAY * min(d, BASE_SONGS_PER_DAY) / BASE_SONGS_PER_DAY
-    return base + max(0, d - BASE_SONGS_PER_DAY) * EXTEND_POINTS_PER_SONG + d * COMMENT_POINTS_PER_SONG
+    extend_songs = max(
+        0, min(d, BASE_SONGS_PER_DAY + EXTEND_SONGS_PER_DAY) - BASE_SONGS_PER_DAY
+    )
+    comment_songs = min(d, COMMENT_SONGS_PER_DAY)
+    return base + extend_songs * EXTEND_POINTS_PER_SONG + comment_songs * COMMENT_POINTS_PER_SONG
 
 
 class Ledger:
@@ -95,6 +104,11 @@ class Ledger:
         end = start + timedelta(days=27)
         return start, end
 
+    def period_number(self, today: date = None) -> int:
+        """当前结算期期号（PERIOD_ANCHOR = 74 期开始日，往后自动滚动）"""
+        today = today or date.today()
+        return 74 + (today - PERIOD_ANCHOR).days // 28
+
     def current_period_summary(self) -> dict:
         """当前结算期统计"""
         start, end = self.period_bounds()
@@ -124,17 +138,24 @@ class Ledger:
             "need_songs": need_songs,
         }
 
-    def print_report(self):
+    def print_report(self, show_est: bool = False) -> str:
+        """结算期报告（账本视角，TG 通知 / --report 共用）。
+
+        默认以「平台实计」为唯一权威口径，不展示账本预估（避免与实计分并排造成
+        「还差」双口径混淆）；show_est=True（--report 自查用）才附带账本估算。
+        """
         s = self.current_period_summary()
         lines = [
             f"===== 结算期报告 [{self.name}] =====",
-            f"当前结算期: {s['start']} ~ {s['end']}（剩余 {s['days_left']} 天）",
-            f"本期已评歌曲: {s['done']} 首（失败 {s['failed']}）",
-            f"预计积分: ~{s['est_points']}（实际规则：基础5首共8分+额外1分/首+乐评1分/首(日上限20)，质量/推荐浮动项未计；满日43分，2026-11-14 逐首实测确认）",
-            f"达标线: {s['target']} 分",
+            f"本期: {self.period_number()}期 {s['start']} ~ {s['end']}（剩余 {s['days_left']} 天）",
+            f"已评: {s['done']} 首（失败 {s['failed']}）· 达标线 {s['target']} 分",
+            "满日理论值: 43 分/天（基础 8 + 额外 15 + 乐评 20，质量/推荐浮动项未计）",
         ]
-        if s["remaining_points"] > 0:
-            lines.append(f"还差约 {s['remaining_points']} 分 ≈ {s['need_songs']} 首歌（按 {s['avg_points_per_song']}分/首 估算）")
-        else:
-            lines.append("✅ 已超过达标线，本期安全")
+        if s["failed"]:
+            lines.append("ℹ️ 失败多为平台瞬时拒评/重试，一般无需处理；连续多日高失败再查日志")
+        if show_est:
+            est = f"账本预估: ~{s['est_points']} 分（模型估算，仅供参考；以平台实计为准）"
+            if s["remaining_points"] > 0:
+                est += f"；按账本口径还差 ~{s['remaining_points']} 分 ≈ {s['need_songs']} 首（{s['avg_points_per_song']}分/首）"
+            lines.append(est)
         return "\n".join(lines)
