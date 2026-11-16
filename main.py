@@ -35,9 +35,8 @@ def _points_line(pts, target: int = TARGET_POINTS) -> str:
     filled = round(pct / 10)
     bar = "▓" * filled + "░" * (10 - filled)
     head = "🎉 已达标" if cur >= target else "📊 平台实计"
-    meta = f"（{pts.get('title', '?')} 期{pts.get('period', '?')} {pts.get('status', '?')}）"
     return "\n".join(
-        [f"{head}: {cur} / {target} 分（还差 {remaining}）{meta}", f"   [{bar}] {pct}%"]
+        [f"{head}: {cur} / {target} 分（还差 {remaining}）", f"   [{bar}] {pct}%"]
     )
 
 
@@ -153,8 +152,37 @@ def run_account(account: dict, debug: bool = False):
     logger.info(f"[{name}] 本次完成 {total_done} 首，失败 {total_failed} 首")
     logger.info(ledger.print_report())
 
-    report_body = f"本次完成 {total_done} 首，失败 {total_failed} 首\n\n" + ledger.print_report()
-    pts_line = _points_line(pts, target)
+    # 8. 本次获得分数：run 后平台积分 - run 前积分 = 真实差值（平台积分即时生效，实测可靠）。
+    #    查询失败时降级为账本估算（标注估算）；计算无收获时省略该行
+    pts_after = get_partner_points(session, account.get("Cookie___csrf", ""), logger)
+    gained = None
+    used_est = False
+    if (
+        pts
+        and cur is not None
+        and pts_after
+        and pts_after.get("integral") is not None
+        and cur < target
+    ):
+        diff = pts_after["integral"] - cur
+        if diff > 0:
+            gained = diff
+        elif total_done > 0:
+            gained = ledger.estimate_points(total_done)
+            used_est = True
+    elif total_done > 0:
+        gained = ledger.estimate_points(total_done)
+        used_est = True
+
+    gained_line = ""
+    if gained is not None and gained > 0:
+        gained_line = f"本次获得 +{gained} 分" + ("（账本估算）" if used_est else "")
+
+    done_line = f"本次完成 {total_done} 首，失败 {total_failed} 首"
+    body_mid = done_line + (f"\n{gained_line}" if gained_line else "")
+    report_body = body_mid + "\n\n" + ledger.print_report()
+    # 平台实计用 run 后积分（报告发出时更贴近真实状态；查询失败退回 run 前值）
+    pts_line = _points_line(pts_after or pts, target)
     if pts_line:
         report_body = pts_line + "\n\n" + report_body
     notifier.send(
