@@ -62,6 +62,10 @@ class Ledger:
     def _file(self) -> str:
         return os.path.join(LEDGER_DIR, f"{self.name}.jsonl")
 
+    def estimate_points(self, done: int) -> int:
+        """按账本规则估算某天评 done 首的积分（平台查询失败时的降级口径）。"""
+        return int(_day_points(done))
+
     def record(self, done: int, failed: int, note: str = ""):
         """记录一次运行结果（追加写入）"""
         row = {
@@ -148,11 +152,8 @@ class Ledger:
         lines = [
             f"===== 结算期报告 [{self.name}] =====",
             f"本期: {self.period_number()}期 {s['start']} ~ {s['end']}（剩余 {s['days_left']} 天）",
-            f"已评: {s['done']} 首（失败 {s['failed']}）· 达标线 {s['target']} 分",
-            "满日理论值: 43 分/天（基础 8 + 额外 15 + 乐评 20，质量/推荐浮动项未计）",
+            f"已评: {s['done']} 首",
         ]
-        if s["failed"]:
-            lines.append("ℹ️ 失败多为平台瞬时拒评/重试，一般无需处理；连续多日高失败再查日志")
         if show_est:
             est = f"账本预估: ~{s['est_points']} 分（模型估算，仅供参考；以平台实计为准）"
             if s["remaining_points"] > 0:
